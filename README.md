@@ -13,7 +13,8 @@ The renderer is tuned to match the default ReSpectrum JSFX behavior in this repo
 
 Channel handling is mono by summing channels (`L + R`) before analysis.
 When using the default ffmpeg encoder, the source WAV audio is muxed into the final video.
-By default (output `.mov`), audio is muxed as uncompressed PCM (`pcm_s16le`).
+Default render settings are optimized for post-production: ProRes 422 HQ (`prores_ks`, profile 3),
+10-bit `yuv422p10le`, and uncompressed PCM audio (`pcm_s16le`) in `.mov`.
 For explicit `.mp4` outputs, audio is muxed as AAC.
 
 ## Usage
@@ -42,7 +43,7 @@ poetry run python -m spectrumanalysis input.wav output.mp4 \
 ```
 
 Grid rendering is hidden by default; pass `--show-grid` to enable it.
-Default encoder is `ffmpeg` (`/usr/bin/ffmpeg`) using `libx264`, `-crf 12`, and `yuv444p`.
+Default encoder is `ffmpeg` (`/usr/bin/ffmpeg`) using `prores_ks`.
 
 If output is omitted, the output defaults to the input filename with `.mov` (PCM audio).
 

@@ -44,10 +44,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to ffmpeg executable",
     )
     parser.add_argument(
+        "--ffmpeg-vcodec",
+        choices=["prores_ks", "libx264", "libx265"],
+        default="prores_ks",
+        help="ffmpeg video codec",
+    )
+    parser.add_argument(
         "--ffmpeg-crf",
         type=int,
         default=12,
-        help="ffmpeg/libx264 CRF quality (lower is higher quality)",
+        help="ffmpeg H.264/H.265 CRF quality (lower is higher quality)",
     )
     parser.add_argument(
         "--ffmpeg-preset",
@@ -58,8 +64,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ffmpeg-pix-fmt",
         type=str,
-        default="yuv444p",
+        default="yuv422p10le",
         help="ffmpeg output pixel format",
+    )
+    parser.add_argument(
+        "--ffmpeg-prores-profile",
+        type=int,
+        default=3,
+        help="ProRes profile for prores_ks (0=proxy,1=LT,2=422,3=HQ,4=4444,5=4444XQ)",
     )
 
     parser.add_argument(
@@ -148,9 +160,11 @@ def main() -> None:
         show_grid=args.show_grid,
         encoder=args.encoder,
         ffmpeg_path=args.ffmpeg_path,
+        ffmpeg_vcodec=args.ffmpeg_vcodec,
         ffmpeg_crf=args.ffmpeg_crf,
         ffmpeg_preset=args.ffmpeg_preset,
         ffmpeg_pix_fmt=args.ffmpeg_pix_fmt,
+        ffmpeg_prores_profile=args.ffmpeg_prores_profile,
     )
 
     result = render_wav_to_mp4(

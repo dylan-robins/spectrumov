@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from scipy.interpolate import PchipInterpolator
 from scipy.io import wavfile
 from tqdm import tqdm
 
@@ -49,9 +50,11 @@ class SpectrumRenderConfig:
     show_grid: bool = False
     encoder: str = "ffmpeg"
     ffmpeg_path: str = "/usr/bin/ffmpeg"
+    ffmpeg_vcodec: str = "prores_ks"
     ffmpeg_crf: int = 12
     ffmpeg_preset: str = "slow"
-    ffmpeg_pix_fmt: str = "yuv444p"
+    ffmpeg_pix_fmt: str = "yuv422p10le"
+    ffmpeg_prores_profile: int = 3
 
 
 class ReSpectrumRenderer:
@@ -183,14 +186,35 @@ class ReSpectrumRenderer:
 
         return curve_y, peak_y
 
+    def _fill_polygon_soft(self, frame: np.ndarray, poly: np.ndarray, color: tuple[int, int, int]) -> None:
+        # Blend fill with a lightly blurred alpha mask to soften the top edge.
+        height, width = frame.shape[:2]
+        pad = 2
+        x0 = int(np.clip(np.min(poly[:, 0]) - pad, 0, width - 1))
+        x1 = int(np.clip(np.max(poly[:, 0]) + pad + 1, 1, width))
+        y0 = int(np.clip(np.min(poly[:, 1]) - pad, 0, height - 1))
+        y1 = int(np.clip(np.max(poly[:, 1]) + pad + 1, 1, height))
+        if x1 <= x0 or y1 <= y0:
+            return
+
+        roi_w = x1 - x0
+        roi_h = y1 - y0
+        local_poly = poly - np.array([x0, y0], dtype=np.int32)
+
+        mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+        cv2.fillPoly(mask, [local_poly.astype(np.int32)], 255, lineType=cv2.LINE_8)
+        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=0.6, sigmaY=0.6)
+
+        alpha = (mask.astype(np.float32) / 255.0)[:, :, None]
+        roi = frame[y0:y1, x0:x1].astype(np.float32)
+        fill = np.array(color, dtype=np.float32).reshape(1, 1, 3)
+        frame[y0:y1, x0:x1] = np.clip(roi * (1.0 - alpha) + fill * alpha, 0.0, 255.0).astype(np.uint8)
+
     def _draw_curve(self, frame: np.ndarray, curve_y: np.ndarray) -> None:
         if self.config.display_mode == "none":
             return
 
-        x = np.clip(self.group_x_int, 0, self.config.width - 1)
-        y = np.minimum(curve_y, self.bottom)
-        y = np.clip(np.rint(y).astype(np.int32), 0, self.config.height - 1)
-        points = np.column_stack((x, y)).astype(np.int32)
+        points = self._build_smoothed_points(curve_y)
         if points.shape[0] < 2:
             return
 
@@ -203,10 +227,31 @@ class ReSpectrumRenderer:
                 )
             )
             poly[:, 1] = np.clip(poly[:, 1], 0, self.config.height - 1)
-            cv2.fillPoly(frame, [poly], self.fill_color, lineType=cv2.LINE_AA)
-            cv2.polylines(frame, [points], False, self.fill_color, 1, cv2.LINE_AA)
+            self._fill_polygon_soft(frame, poly, self.fill_color)
         elif self.config.display_mode == "line":
             cv2.polylines(frame, [points], False, self.line_color, 1, cv2.LINE_AA)
+
+    def _build_smoothed_points(self, y_values: np.ndarray) -> np.ndarray:
+        x_src = np.clip(self.group_x, 0.0, float(self.config.width - 1))
+        y_src = np.minimum(y_values, self.bottom)
+        y_src = np.clip(y_src, 0.0, float(self.config.height - 1))
+
+        x_start = int(max(0, math.ceil(float(x_src[0]))))
+        x_end = int(min(self.config.width - 1, math.floor(float(x_src[-1]))))
+        if x_end <= x_start:
+            return np.column_stack((np.rint(x_src).astype(np.int32), np.rint(y_src).astype(np.int32)))
+
+        x_dense = np.arange(x_start, x_end + 1, dtype=np.float64)
+        try:
+            spline = PchipInterpolator(x_src, y_src, extrapolate=False)
+            y_dense = spline(x_dense)
+        except Exception:
+            # Fallback to linear interpolation if spline construction fails.
+            y_dense = np.interp(x_dense, x_src, y_src)
+
+        y_dense = np.nan_to_num(y_dense, nan=self.bottom, posinf=self.bottom, neginf=0.0)
+        y_dense = np.clip(np.rint(y_dense), 0, self.config.height - 1).astype(np.int32)
+        return np.column_stack((x_dense.astype(np.int32), y_dense))
 
     def _draw_peaks(self, frame: np.ndarray, peak_y: np.ndarray | None) -> None:
         if not self.config.show_peaks or peak_y is None:
@@ -418,11 +463,21 @@ class ReSpectrumRenderer:
                 cmd += ["-an"]
             cmd += [
                 "-c:v",
-                "libx264",
-                "-preset",
-                self.config.ffmpeg_preset,
-                "-crf",
-                str(int(self.config.ffmpeg_crf)),
+                self.config.ffmpeg_vcodec,
+            ]
+            if self.config.ffmpeg_vcodec in {"libx264", "libx265"}:
+                cmd += [
+                    "-preset",
+                    self.config.ffmpeg_preset,
+                    "-crf",
+                    str(int(self.config.ffmpeg_crf)),
+                ]
+            elif self.config.ffmpeg_vcodec == "prores_ks":
+                cmd += [
+                    "-profile:v",
+                    str(int(self.config.ffmpeg_prores_profile)),
+                ]
+            cmd += [
                 "-pix_fmt",
                 self.config.ffmpeg_pix_fmt,
                 "-movflags",

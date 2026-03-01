@@ -24,6 +24,7 @@ def test_grid_default_is_hidden() -> None:
     cfg = SpectrumRenderConfig()
     assert cfg.show_grid is False
     assert cfg.encoder == "ffmpeg"
+    assert cfg.ffmpeg_vcodec == "prores_ks"
 
 
 def test_audio_codec_selected_from_container() -> None:
