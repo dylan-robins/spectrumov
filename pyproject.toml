@@ -12,6 +12,10 @@ scipy = "^1.17.0"
 matplotlib = "^3.10.8"
 opencv-python = "^4.13.0.92"
 tqdm = "^4.67.3"
+av = {version = ">=13.1.0,<17.0.0", optional = true}
+
+[tool.poetry.extras]
+pyav = ["av"]
 
 [tool.poetry.scripts]
 spectrumov = "spectrumov.cli:main"

@@ -8,7 +8,9 @@ from spectrumov.renderer import (
     SpectrumRenderConfig,
     choose_audio_codec_for_container,
     decode_audio_mono_with_ffmpeg,
+    decode_audio_mono_with_pyav,
     load_audio_mono_for_analysis,
+    mux_audio_with_ffmpeg,
 )
 
 
@@ -108,6 +110,28 @@ def test_load_audio_non_wav_uses_ffmpeg_decoder(monkeypatch, tmp_path) -> None:
     assert captured["sample_rate"] == 48000
 
 
+def test_load_audio_non_wav_uses_pyav_decoder_when_selected(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_decode(input_audio, sample_rate):
+        captured["input_audio"] = input_audio
+        captured["sample_rate"] = sample_rate
+        return np.array([0.9, -0.1], dtype=np.float32)
+
+    monkeypatch.setattr("spectrumov.renderer.decode_audio_mono_with_pyav", _fake_decode)
+
+    cfg = SpectrumRenderConfig(encoder="pyav", analysis_sample_rate=44100)
+    input_ogg = tmp_path / "input.ogg"
+    input_ogg.write_bytes(b"fake")
+
+    sample_rate, mono = load_audio_mono_for_analysis(input_ogg, cfg)
+
+    assert sample_rate == 44100
+    np.testing.assert_allclose(mono, np.array([0.9, -0.1], dtype=np.float32))
+    assert str(captured["input_audio"]).endswith("input.ogg")
+    assert captured["sample_rate"] == 44100
+
+
 def test_decode_audio_mono_with_ffmpeg_reads_f32(monkeypatch, tmp_path) -> None:
     audio_path = tmp_path / "input.ogg"
     audio_path.write_bytes(b"fake")
@@ -148,3 +172,39 @@ def test_decode_audio_mono_with_ffmpeg_raises_on_error(monkeypatch, tmp_path) ->
 
     with pytest.raises(RuntimeError, match="ffmpeg decode failed"):
         decode_audio_mono_with_ffmpeg(audio_path, "/usr/bin/ffmpeg", 48000)
+
+
+def test_mux_audio_with_ffmpeg_uses_stream_copy_for_video(monkeypatch, tmp_path) -> None:
+    video_path = tmp_path / "video_only.mov"
+    audio_path = tmp_path / "audio.wav"
+    out_path = tmp_path / "out.mov"
+    video_path.write_bytes(b"v")
+    audio_path.write_bytes(b"a")
+
+    class _Proc:
+        def __init__(self) -> None:
+            self.returncode = 0
+            self.stdout = b""
+            self.stderr = b""
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd, stdout, stderr, check):
+        captured["cmd"] = cmd
+        return _Proc()
+
+    monkeypatch.setattr("spectrumov.renderer.subprocess.run", _fake_run)
+
+    mux_audio_with_ffmpeg("/usr/bin/ffmpeg", video_path, audio_path, out_path)
+    cmd = captured["cmd"]
+    assert "-c:v" in cmd and "copy" in cmd
+    assert "-c:a" in cmd and "pcm_s16le" in cmd
+
+
+def test_decode_audio_mono_with_pyav_raises_if_missing(monkeypatch, tmp_path) -> None:
+    audio_path = tmp_path / "input.m4a"
+    audio_path.write_bytes(b"fake")
+    monkeypatch.setattr("spectrumov.renderer.require_pyav", lambda: (_ for _ in ()).throw(RuntimeError("missing")))
+
+    with pytest.raises(RuntimeError, match="missing"):
+        decode_audio_mono_with_pyav(audio_path, 48000)

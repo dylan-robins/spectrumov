@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 from pathlib import Path
 
 from .renderer import SpectrumRenderConfig, render_audio_to_video
@@ -11,6 +12,10 @@ WINDOW_TYPES = {
     "blackman": 3,
     "rectangular": 4,
 }
+
+
+def _pyav_available() -> bool:
+    return importlib.util.find_spec("av") is not None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,12 +33,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to output video (default: <input_basename>.mov)",
     )
 
+    encoder_choices = ["ffmpeg", "opencv"]
+    if _pyav_available():
+        encoder_choices.insert(1, "pyav")
+
     parser.add_argument("--width", type=int, default=1920, help="Video width in pixels")
     parser.add_argument("--height", type=int, default=300, help="Video height in pixels")
     parser.add_argument("--fps", type=float, default=30.0, help="Video frame rate")
     parser.add_argument(
         "--encoder",
-        choices=["ffmpeg", "opencv"],
+        choices=encoder_choices,
         default="ffmpeg",
         help="Video encoder backend",
     )

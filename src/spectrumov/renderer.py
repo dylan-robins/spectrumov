@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import subprocess
+from fractions import Fraction
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,54 @@ from .utils import (
 def choose_audio_codec_for_container(output_path: str | Path) -> str:
     suffix = Path(output_path).suffix.lower()
     return "pcm_s16le" if suffix == ".mov" else "aac"
+
+
+def require_pyav():
+    try:
+        import av
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "PyAV is not installed. Install the optional extra with `poetry install -E pyav`."
+        ) from exc
+    return av
+
+
+def mux_audio_with_ffmpeg(
+    ffmpeg_path: str,
+    video_only_path: str | Path,
+    source_audio_path: str | Path,
+    output_path: str | Path,
+) -> None:
+    output = Path(output_path)
+    audio_codec = choose_audio_codec_for_container(output)
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        str(video_only_path),
+        "-i",
+        str(source_audio_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0?",
+        "-c:v",
+        "copy",
+        "-c:a",
+        audio_codec,
+        "-shortest",
+    ]
+    if audio_codec == "aac":
+        cmd += ["-b:a", "192k"]
+    cmd += ["-movflags", "+faststart", str(output)]
+
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg mux failed with exit code {proc.returncode}: {proc.stderr.decode(errors='replace')}"
+        )
 
 
 @dataclass(slots=True)
@@ -529,10 +578,97 @@ class ReSpectrumRenderer:
             rc = proc.wait()
             if rc != 0:
                 raise RuntimeError(f"ffmpeg failed with exit code {rc}: {stderr_out.decode(errors='replace')}")
+        elif self.config.encoder == "pyav":
+            self._render_audio_with_pyav(iterator, padded, output_path, source_audio_path)
         else:
             raise ValueError(f"Unsupported encoder: {self.config.encoder}")
 
         return total_frames
+
+    def _render_audio_with_pyav(
+        self,
+        iterator: np.ndarray | tqdm,
+        padded: np.ndarray,
+        output_path: Path,
+        source_audio_path: str | Path | None,
+    ) -> None:
+        av = require_pyav()
+
+        frame_format = "bgr48le" if self.frame_dtype == np.uint16 else "bgr24"
+        stream_options: dict[str, str] = {}
+        if self.config.ffmpeg_vcodec in {"libx264", "libx265"}:
+            stream_options["preset"] = self.config.ffmpeg_preset
+            stream_options["crf"] = str(int(self.config.ffmpeg_crf))
+        elif self.config.ffmpeg_vcodec == "prores":
+            stream_options["profile"] = str(int(self.config.ffmpeg_prores_profile))
+
+        container = av.open(str(output_path), mode="w")
+        source_audio_container = None
+        try:
+            stream_rate = Fraction(str(float(self.config.fps))).limit_denominator(1_000_000)
+            stream = container.add_stream(self.config.ffmpeg_vcodec, rate=stream_rate)
+            stream.width = int(self.config.width)
+            stream.height = int(self.config.height)
+            stream.pix_fmt = self.config.ffmpeg_pix_fmt
+            if stream_options:
+                stream.options = stream_options
+
+            source_audio_stream = None
+            output_audio_stream = None
+            audio_resampler = None
+            if source_audio_path is not None:
+                source_audio_container = av.open(str(source_audio_path), mode="r")
+                source_audio_stream = next(
+                    (s for s in source_audio_container.streams if s.type == "audio"),
+                    None,
+                )
+                if source_audio_stream is not None:
+                    audio_codec = choose_audio_codec_for_container(output_path)
+                    output_audio_stream = container.add_stream(audio_codec, rate=int(source_audio_stream.rate or 48000))
+                    if source_audio_stream.layout is not None:
+                        output_audio_stream.layout = source_audio_stream.layout.name
+                    if audio_codec == "aac":
+                        output_audio_stream.bit_rate = 192000
+
+                    target_format = "fltp" if audio_codec == "aac" else "s16"
+                    target_layout = (
+                        output_audio_stream.layout.name
+                        if output_audio_stream.layout is not None
+                        else "stereo"
+                    )
+                    target_rate = int(output_audio_stream.rate or source_audio_stream.rate or 48000)
+                    audio_resampler = av.AudioResampler(
+                        format=target_format,
+                        layout=target_layout,
+                        rate=target_rate,
+                    )
+
+            for end in iterator:
+                block = padded[end : end + self.config.fft_size]
+                frame = self.render_frame(block)
+                video_frame = av.VideoFrame.from_ndarray(frame, format=frame_format)
+                for packet in stream.encode(video_frame):
+                    container.mux(packet)
+
+            for packet in stream.encode():
+                container.mux(packet)
+
+            if source_audio_stream is not None and output_audio_stream is not None and audio_resampler is not None:
+                for packet in source_audio_container.demux(source_audio_stream):
+                    for audio_frame in packet.decode():
+                        resampled = audio_resampler.resample(audio_frame)
+                        if resampled is None:
+                            continue
+                        frames = resampled if isinstance(resampled, list) else [resampled]
+                        for resampled_frame in frames:
+                            for out_packet in output_audio_stream.encode(resampled_frame):
+                                container.mux(out_packet)
+                for out_packet in output_audio_stream.encode():
+                    container.mux(out_packet)
+        finally:
+            if source_audio_container is not None:
+                source_audio_container.close()
+            container.close()
 
 
 def render_audio_to_video(
@@ -604,6 +740,34 @@ def decode_audio_mono_with_ffmpeg(
     return mono
 
 
+def decode_audio_mono_with_pyav(input_audio: str | Path, sample_rate: int) -> np.ndarray:
+    av = require_pyav()
+    chunks: list[np.ndarray] = []
+
+    container = av.open(str(input_audio), mode="r")
+    try:
+        audio_stream = next((s for s in container.streams if s.type == "audio"), None)
+        if audio_stream is None:
+            raise RuntimeError(f"No audio stream found in: {input_audio}")
+
+        resampler = av.AudioResampler(format="fltp", layout="mono", rate=int(sample_rate))
+        for packet in container.demux(audio_stream):
+            for frame in packet.decode():
+                resampled = resampler.resample(frame)
+                if resampled is None:
+                    continue
+                frames = resampled if isinstance(resampled, list) else [resampled]
+                for mono_frame in frames:
+                    mono_arr = np.asarray(mono_frame.to_ndarray(), dtype=np.float32).reshape(-1)
+                    chunks.append(mono_arr)
+    finally:
+        container.close()
+
+    if not chunks:
+        raise RuntimeError("Decoded audio is empty")
+    return np.concatenate(chunks).astype(np.float32, copy=False)
+
+
 def load_audio_mono_for_analysis(input_audio: str | Path, config: SpectrumRenderConfig) -> tuple[int, np.ndarray]:
     input_path = Path(input_audio)
     if input_path.suffix.lower() == ".wav":
@@ -613,9 +777,15 @@ def load_audio_mono_for_analysis(input_audio: str | Path, config: SpectrumRender
         return int(sample_rate), mono
 
     sample_rate = int(config.analysis_sample_rate)
-    mono = decode_audio_mono_with_ffmpeg(
-        input_audio=input_path,
-        ffmpeg_path=config.ffmpeg_path,
-        sample_rate=sample_rate,
-    )
+    if config.encoder == "pyav":
+        mono = decode_audio_mono_with_pyav(
+            input_audio=input_path,
+            sample_rate=sample_rate,
+        )
+    else:
+        mono = decode_audio_mono_with_ffmpeg(
+            input_audio=input_path,
+            ffmpeg_path=config.ffmpeg_path,
+            sample_rate=sample_rate,
+        )
     return sample_rate, mono

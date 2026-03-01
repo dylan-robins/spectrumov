@@ -50,6 +50,10 @@ poetry run python -m spectrumov input.wav output.mov \
 
 Grid rendering is hidden by default; pass `--show-grid` to enable it.
 Default encoder is `ffmpeg` (`/usr/bin/ffmpeg`) using native `prores`.
+Experimental in-process encoding is available with `--encoder pyav` (via PyAV/libav*).
+Install it with: `poetry install -E pyav`
+Try it with: `poetry run spectrumov input.wav output.mov --encoder pyav`.
+When using `--encoder pyav`, a system-installed `ffmpeg` binary is not required.
 Internal rendering defaults to 16-bit before encoding (`--render-bit-depth 16`).
 Curve smoothing defaults to `--curve-smoothing 1.2` (set `0` to disable).
 
