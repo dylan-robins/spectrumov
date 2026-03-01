@@ -20,22 +20,23 @@ For explicit `.mp4` outputs, audio is muxed as AAC.
 ## Usage
 
 ```bash
-poetry run python -m spectrumanalysis input.wav output.mp4
+poetry run python -m spectrumanalysis input.wav output.mov
 ```
 
-Default video size is `1920x300`. You can override it:
+Default video size is `1920x500`. You can override it:
 
 ```bash
-poetry run python -m spectrumanalysis input.wav output.mp4 --width 1280 --height 360
+poetry run python -m spectrumanalysis input.wav output.mov --width 1280 --height 360
 ```
 
 Common options:
 
 ```bash
-poetry run python -m spectrumanalysis input.wav output.mp4 \
+poetry run python -m spectrumanalysis input.wav output.mov \
   --fps 30 \
   --encoder ffmpeg \
   --display-mode fill \
+  --curve-smoothing 1.2 \
   --show-peaks \
   --show-grid \
   --fft-size 8192 \
@@ -44,6 +45,8 @@ poetry run python -m spectrumanalysis input.wav output.mp4 \
 
 Grid rendering is hidden by default; pass `--show-grid` to enable it.
 Default encoder is `ffmpeg` (`/usr/bin/ffmpeg`) using `prores_ks`.
+Internal rendering defaults to 16-bit before encoding (`--render-bit-depth 16`).
+Curve smoothing defaults to `--curve-smoothing 1.2` (set `0` to disable).
 
 If output is omitted, the output defaults to the input filename with `.mov` (PCM audio).
 

@@ -17,7 +17,7 @@ def test_render_frame_shape_and_dtype() -> None:
     frame = renderer.render_frame(block)
 
     assert frame.shape == (cfg.height, cfg.width, 3)
-    assert frame.dtype == np.uint8
+    assert frame.dtype == np.uint16
 
 
 def test_grid_default_is_hidden() -> None:
@@ -25,6 +25,8 @@ def test_grid_default_is_hidden() -> None:
     assert cfg.show_grid is False
     assert cfg.encoder == "ffmpeg"
     assert cfg.ffmpeg_vcodec == "prores_ks"
+    assert cfg.render_bit_depth == 16
+    assert cfg.curve_smoothing_sigma == 1.2
 
 
 def test_audio_codec_selected_from_container() -> None:

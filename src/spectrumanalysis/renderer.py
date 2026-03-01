@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import PchipInterpolator
 from scipy.io import wavfile
 from tqdm import tqdm
@@ -55,6 +56,8 @@ class SpectrumRenderConfig:
     ffmpeg_preset: str = "slow"
     ffmpeg_pix_fmt: str = "yuv422p10le"
     ffmpeg_prores_profile: int = 3
+    render_bit_depth: int = 16
+    curve_smoothing_sigma: float = 1.2
 
 
 class ReSpectrumRenderer:
@@ -65,9 +68,13 @@ class ReSpectrumRenderer:
             raise ValueError("display_mode must be one of: fill, line, none")
         if config.width <= 0 or config.height <= 0:
             raise ValueError("width and height must be positive")
+        if config.render_bit_depth not in {8, 16}:
+            raise ValueError("render_bit_depth must be 8 or 16")
 
         self.sample_rate = float(sample_rate)
         self.config = config
+        self.frame_dtype = np.uint16 if config.render_bit_depth == 16 else np.uint8
+        self.frame_max = 65535 if config.render_bit_depth == 16 else 255
 
         self.left_margin = 0.0
         self.right_margin = 0.0
@@ -107,16 +114,22 @@ class ReSpectrumRenderer:
         self.font_thickness = 1
 
         # RGB in JSFX -> BGR in OpenCV.
-        self.fill_color = (83, 71, 46)
-        self.line_color = (253, 215, 114)
-        self.peak_color = (204, 204, 204)
+        self.fill_color = self._scale_color((83, 71, 46))
+        self.line_color = self._scale_color((253, 215, 114))
+        self.peak_color = self._scale_color((204, 204, 204))
 
-        self.grid_hline_color = (77, 77, 77)
-        self.grid_minor_vline_color = (153, 153, 153)
-        self.grid_major_vline_color = (204, 204, 204)
-        self.grid_text_color = (102, 102, 102)
+        self.grid_hline_color = self._scale_color((77, 77, 77))
+        self.grid_minor_vline_color = self._scale_color((153, 153, 153))
+        self.grid_major_vline_color = self._scale_color((204, 204, 204))
+        self.grid_text_color = self._scale_color((102, 102, 102))
 
         self._build_gradient()
+
+    def _scale_color(self, bgr_8bit: tuple[int, int, int]) -> tuple[int, int, int]:
+        if self.frame_max == 255:
+            return bgr_8bit
+        scale = self.frame_max / 255.0
+        return tuple(int(round(c * scale)) for c in bgr_8bit)
 
     def _build_gradient(self) -> None:
         ht = (self.config.height - self.bottom_margin - self.text_height) + 2.0
@@ -208,7 +221,9 @@ class ReSpectrumRenderer:
         alpha = (mask.astype(np.float32) / 255.0)[:, :, None]
         roi = frame[y0:y1, x0:x1].astype(np.float32)
         fill = np.array(color, dtype=np.float32).reshape(1, 1, 3)
-        frame[y0:y1, x0:x1] = np.clip(roi * (1.0 - alpha) + fill * alpha, 0.0, 255.0).astype(np.uint8)
+        frame[y0:y1, x0:x1] = np.clip(
+            roi * (1.0 - alpha) + fill * alpha, 0.0, float(self.frame_max)
+        ).astype(self.frame_dtype)
 
     def _draw_curve(self, frame: np.ndarray, curve_y: np.ndarray) -> None:
         if self.config.display_mode == "none":
@@ -235,6 +250,8 @@ class ReSpectrumRenderer:
         x_src = np.clip(self.group_x, 0.0, float(self.config.width - 1))
         y_src = np.minimum(y_values, self.bottom)
         y_src = np.clip(y_src, 0.0, float(self.config.height - 1))
+        if self.config.curve_smoothing_sigma > 0.0:
+            y_src = gaussian_filter1d(y_src, sigma=self.config.curve_smoothing_sigma, mode="nearest")
 
         x_start = int(max(0, math.ceil(float(x_src[0]))))
         x_end = int(min(self.config.width - 1, math.floor(float(x_src[-1]))))
@@ -270,7 +287,7 @@ class ReSpectrumRenderer:
             return
 
         view = frame[self.gradient_start : self.gradient_end]
-        scaled = (view.astype(np.float32) * self.gradient_mul).astype(np.uint8)
+        scaled = (view.astype(np.float32) * self.gradient_mul).astype(self.frame_dtype)
         frame[self.gradient_start : self.gradient_end] = scaled
 
     def _draw_grid(self, frame: np.ndarray) -> None:
@@ -378,7 +395,7 @@ class ReSpectrumRenderer:
     def render_frame(self, frame_samples: np.ndarray) -> np.ndarray:
         curve_y, peak_y = self.analyze_frame(frame_samples)
 
-        frame = np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
+        frame = np.zeros((self.config.height, self.config.width, 3), dtype=self.frame_dtype)
 
         self._draw_curve(frame, curve_y)
         self._draw_peaks(frame, peak_y)
@@ -424,10 +441,13 @@ class ReSpectrumRenderer:
                 for end in iterator:
                     block = padded[end : end + self.config.fft_size]
                     frame = self.render_frame(block)
+                    if frame.dtype != np.uint8:
+                        frame = (frame / 257.0).astype(np.uint8)
                     writer.write(frame)
             finally:
                 writer.release()
         elif self.config.encoder == "ffmpeg":
+            input_pix_fmt = "bgr48le" if self.frame_dtype == np.uint16 else "bgr24"
             cmd = [
                 self.config.ffmpeg_path,
                 "-y",
@@ -436,7 +456,7 @@ class ReSpectrumRenderer:
                 "-f",
                 "rawvideo",
                 "-pix_fmt",
-                "bgr24",
+                input_pix_fmt,
                 "-s",
                 f"{self.config.width}x{self.config.height}",
                 "-r",

@@ -73,6 +73,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="ProRes profile for prores_ks (0=proxy,1=LT,2=422,3=HQ,4=4444,5=4444XQ)",
     )
+    parser.add_argument(
+        "--render-bit-depth",
+        type=int,
+        choices=[8, 16],
+        default=16,
+        help="Internal render bit depth before encoding",
+    )
+    parser.add_argument(
+        "--curve-smoothing",
+        type=float,
+        default=1.2,
+        help="Gaussian smoothing sigma (in analyzer bins) applied before spline resampling",
+    )
 
     parser.add_argument(
         "--display-mode",
@@ -165,6 +178,8 @@ def main() -> None:
         ffmpeg_preset=args.ffmpeg_preset,
         ffmpeg_pix_fmt=args.ffmpeg_pix_fmt,
         ffmpeg_prores_profile=args.ffmpeg_prores_profile,
+        render_bit_depth=args.render_bit_depth,
+        curve_smoothing_sigma=args.curve_smoothing,
     )
 
     result = render_wav_to_mp4(
