@@ -51,7 +51,7 @@ class SpectrumRenderConfig:
     show_grid: bool = False
     encoder: str = "ffmpeg"
     ffmpeg_path: str = "/usr/bin/ffmpeg"
-    ffmpeg_vcodec: str = "prores_ks"
+    ffmpeg_vcodec: str = "prores"
     ffmpeg_crf: int = 12
     ffmpeg_preset: str = "slow"
     ffmpeg_pix_fmt: str = "yuv422p10le"
@@ -105,6 +105,24 @@ class ReSpectrumRenderer:
             config.max_freq,
         )
         self.group_x_int = np.rint(self.group_x).astype(np.int32)
+        self.curve_x_src = np.clip(self.group_x, 0.0, float(self.config.width - 1))
+        self.curve_x_start = int(max(0, math.ceil(float(self.curve_x_src[0]))))
+        self.curve_x_end = int(min(self.config.width - 1, math.floor(float(self.curve_x_src[-1]))))
+        if self.curve_x_end > self.curve_x_start:
+            self.curve_x_dense = np.arange(self.curve_x_start, self.curve_x_end + 1, dtype=np.float64)
+            self.curve_x_dense_int = self.curve_x_dense.astype(np.int32)
+            self.curve_points = np.empty((self.curve_x_dense_int.size, 2), dtype=np.int32)
+            self.curve_points[:, 0] = self.curve_x_dense_int
+
+            self.curve_poly = np.empty((self.curve_x_dense_int.size + 2, 2), dtype=np.int32)
+            self.curve_poly[0, 0] = int(self.curve_x_dense_int[0])
+            self.curve_poly[-1, 0] = int(self.curve_x_dense_int[-1])
+            self.curve_poly[1:-1, 0] = self.curve_x_dense_int
+        else:
+            self.curve_x_dense = None
+            self.curve_x_dense_int = None
+            self.curve_points = None
+            self.curve_poly = None
 
         self.smoothed_y01 = np.zeros(self.group_count, dtype=np.float64)
         self.peak_mag = np.full(self.group_count, SMALL_MAG, dtype=np.float64)
@@ -200,32 +218,6 @@ class ReSpectrumRenderer:
 
         return curve_y, peak_y
 
-    def _fill_polygon_soft(self, frame: np.ndarray, poly: np.ndarray, color: tuple[int, int, int]) -> None:
-        # Blend fill with a lightly blurred alpha mask to soften the top edge.
-        height, width = frame.shape[:2]
-        pad = 2
-        x0 = int(np.clip(np.min(poly[:, 0]) - pad, 0, width - 1))
-        x1 = int(np.clip(np.max(poly[:, 0]) + pad + 1, 1, width))
-        y0 = int(np.clip(np.min(poly[:, 1]) - pad, 0, height - 1))
-        y1 = int(np.clip(np.max(poly[:, 1]) + pad + 1, 1, height))
-        if x1 <= x0 or y1 <= y0:
-            return
-
-        roi_w = x1 - x0
-        roi_h = y1 - y0
-        local_poly = poly - np.array([x0, y0], dtype=np.int32)
-
-        mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-        cv2.fillPoly(mask, [local_poly.astype(np.int32)], 255, lineType=cv2.LINE_8)
-        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=0.6, sigmaY=0.6)
-
-        alpha = (mask.astype(np.float32) / 255.0)[:, :, None]
-        roi = frame[y0:y1, x0:x1].astype(np.float32)
-        fill = np.array(color, dtype=np.float32).reshape(1, 1, 3)
-        frame[y0:y1, x0:x1] = np.clip(
-            roi * (1.0 - alpha) + fill * alpha, 0.0, float(self.frame_max)
-        ).astype(self.frame_dtype)
-
     def _draw_curve(self, frame: np.ndarray, curve_y: np.ndarray) -> None:
         if self.config.display_mode == "none":
             return
@@ -235,41 +227,44 @@ class ReSpectrumRenderer:
             return
 
         if self.config.display_mode == "fill":
-            poly = np.vstack(
-                (
-                    np.array([[points[0, 0], int(self.bottom)]], dtype=np.int32),
-                    points,
-                    np.array([[points[-1, 0], int(self.bottom)]], dtype=np.int32),
+            if self.curve_poly is not None and points.shape[0] == self.curve_points.shape[0]:
+                self.curve_poly[0, 1] = int(self.bottom)
+                self.curve_poly[-1, 1] = int(self.bottom)
+                self.curve_poly[1:-1, 1] = points[:, 1]
+                cv2.fillPoly(frame, [self.curve_poly], self.fill_color, lineType=cv2.LINE_AA)
+            else:
+                poly = np.vstack(
+                    (
+                        np.array([[points[0, 0], int(self.bottom)]], dtype=np.int32),
+                        points,
+                        np.array([[points[-1, 0], int(self.bottom)]], dtype=np.int32),
+                    )
                 )
-            )
-            poly[:, 1] = np.clip(poly[:, 1], 0, self.config.height - 1)
-            self._fill_polygon_soft(frame, poly, self.fill_color)
+                poly[:, 1] = np.clip(poly[:, 1], 0, self.config.height - 1)
+                cv2.fillPoly(frame, [poly], self.fill_color, lineType=cv2.LINE_AA)
         elif self.config.display_mode == "line":
             cv2.polylines(frame, [points], False, self.line_color, 1, cv2.LINE_AA)
 
     def _build_smoothed_points(self, y_values: np.ndarray) -> np.ndarray:
-        x_src = np.clip(self.group_x, 0.0, float(self.config.width - 1))
+        x_src = self.curve_x_src
         y_src = np.minimum(y_values, self.bottom)
         y_src = np.clip(y_src, 0.0, float(self.config.height - 1))
         if self.config.curve_smoothing_sigma > 0.0:
             y_src = gaussian_filter1d(y_src, sigma=self.config.curve_smoothing_sigma, mode="nearest")
 
-        x_start = int(max(0, math.ceil(float(x_src[0]))))
-        x_end = int(min(self.config.width - 1, math.floor(float(x_src[-1]))))
-        if x_end <= x_start:
+        if self.curve_x_dense is None or self.curve_points is None:
             return np.column_stack((np.rint(x_src).astype(np.int32), np.rint(y_src).astype(np.int32)))
 
-        x_dense = np.arange(x_start, x_end + 1, dtype=np.float64)
         try:
             spline = PchipInterpolator(x_src, y_src, extrapolate=False)
-            y_dense = spline(x_dense)
+            y_dense = spline(self.curve_x_dense)
         except Exception:
             # Fallback to linear interpolation if spline construction fails.
-            y_dense = np.interp(x_dense, x_src, y_src)
+            y_dense = np.interp(self.curve_x_dense, x_src, y_src)
 
         y_dense = np.nan_to_num(y_dense, nan=self.bottom, posinf=self.bottom, neginf=0.0)
-        y_dense = np.clip(np.rint(y_dense), 0, self.config.height - 1).astype(np.int32)
-        return np.column_stack((x_dense.astype(np.int32), y_dense))
+        self.curve_points[:, 1] = np.clip(np.rint(y_dense), 0, self.config.height - 1).astype(np.int32)
+        return self.curve_points
 
     def _draw_peaks(self, frame: np.ndarray, peak_y: np.ndarray | None) -> None:
         if not self.config.show_peaks or peak_y is None:
@@ -288,8 +283,7 @@ class ReSpectrumRenderer:
             return
 
         view = frame[self.gradient_start : self.gradient_end]
-        scaled = (view.astype(np.float32) * self.gradient_mul).astype(self.frame_dtype)
-        frame[self.gradient_start : self.gradient_end] = scaled
+        np.multiply(view, self.gradient_mul, out=view, casting="unsafe")
 
     def _draw_grid(self, frame: np.ndarray) -> None:
         if not self.config.show_grid or self.very_compact:
@@ -493,7 +487,7 @@ class ReSpectrumRenderer:
                     "-crf",
                     str(int(self.config.ffmpeg_crf)),
                 ]
-            elif self.config.ffmpeg_vcodec == "prores_ks":
+            elif self.config.ffmpeg_vcodec == "prores":
                 cmd += [
                     "-profile:v",
                     str(int(self.config.ffmpeg_prores_profile)),
@@ -517,7 +511,7 @@ class ReSpectrumRenderer:
                 for end in iterator:
                     block = padded[end : end + self.config.fft_size]
                     frame = self.render_frame(block)
-                    proc.stdin.write(frame.tobytes())
+                    proc.stdin.write(memoryview(frame))
             except BrokenPipeError as exc:
                 stderr = b""
                 if proc.stderr is not None:

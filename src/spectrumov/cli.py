@@ -45,8 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--ffmpeg-vcodec",
-        choices=["prores_ks", "libx264", "libx265"],
-        default="prores_ks",
+        choices=["prores", "libx264", "libx265"],
+        default="prores",
         help="ffmpeg video codec",
     )
     parser.add_argument(
@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--ffmpeg-prores-profile",
         type=int,
         default=3,
-        help="ProRes profile for prores_ks (0=proxy,1=LT,2=422,3=HQ,4=4444,5=4444XQ)",
+        help="ProRes profile for prores (0=proxy,1=LT,2=422,3=HQ,4=4444,5=4444XQ)",
     )
     parser.add_argument(
         "--render-bit-depth",

@@ -27,7 +27,7 @@ def test_grid_default_is_hidden() -> None:
     cfg = SpectrumRenderConfig()
     assert cfg.show_grid is False
     assert cfg.encoder == "ffmpeg"
-    assert cfg.ffmpeg_vcodec == "prores_ks"
+    assert cfg.ffmpeg_vcodec == "prores"
     assert cfg.render_bit_depth == 16
     assert cfg.curve_smoothing_sigma == 1.2
 
