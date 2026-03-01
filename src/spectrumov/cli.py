@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .renderer import SpectrumRenderConfig, render_wav_to_mp4
+from .renderer import SpectrumRenderConfig, render_audio_to_video
 
 WINDOW_TYPES = {
     "hamming": 1,
@@ -16,11 +16,11 @@ WINDOW_TYPES = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Render a ReSpectrum-like spectrum analyzer video from a WAV file "
+            "Render a ReSpectrum-like spectrum analyzer video from an audio file "
             "using OpenCV."
         )
     )
-    parser.add_argument("input_wav", type=Path, help="Path to source WAV file")
+    parser.add_argument("input_audio", type=Path, help="Path to source audio file (wav, mp3, ogg, flac, ...)")
     parser.add_argument(
         "output_mp4",
         type=Path,
@@ -151,11 +151,11 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    input_wav = args.input_wav
-    if not input_wav.exists():
-        raise FileNotFoundError(f"Input WAV does not exist: {input_wav}")
+    input_audio = args.input_audio
+    if not input_audio.exists():
+        raise FileNotFoundError(f"Input audio does not exist: {input_audio}")
 
-    output_mp4 = args.output_mp4 or input_wav.with_suffix(".mov")
+    output_mp4 = args.output_mp4 or input_audio.with_suffix(".mov")
 
     config = SpectrumRenderConfig(
         width=args.width,
@@ -182,8 +182,8 @@ def main() -> None:
         curve_smoothing_sigma=args.curve_smoothing,
     )
 
-    result = render_wav_to_mp4(
-        input_wav=input_wav,
+    result = render_audio_to_video(
+        input_audio=input_audio,
         output_mp4=output_mp4,
         config=config,
         show_progress=not args.no_progress,

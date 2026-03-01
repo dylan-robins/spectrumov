@@ -1,6 +1,6 @@
 # spectrumov
 
-Render a ReSpectrum-style spectrum analyzer MP4 from a WAV file.
+Render a ReSpectrum-style spectrum analyzer video from an audio file.
 
 The renderer is tuned to match the default ReSpectrum JSFX behavior in this repo:
 
@@ -12,10 +12,11 @@ The renderer is tuned to match the default ReSpectrum JSFX behavior in this repo
 - JSFX-like log-frequency binning and envelope smoothing
 
 Channel handling is mono by summing channels (`L + R`) before analysis.
-When using the default ffmpeg encoder, the source WAV audio is muxed into the final video.
+When using the default ffmpeg encoder, the source audio is muxed into the final video.
 Default render settings are optimized for post-production: ProRes 422 HQ (`prores_ks`, profile 3),
 10-bit `yuv422p10le`, and uncompressed PCM audio (`pcm_s16le`) in `.mov`.
 For explicit `.mp4` outputs, audio is muxed as AAC.
+Input can be WAV or any container/codec ffmpeg can decode (for example mp3, ogg, flac, m4a).
 
 ## Usage
 
@@ -26,7 +27,7 @@ poetry run python -m spectrumov input.wav output.mov
 Default video size is `1920x500`. You can override it:
 
 ```bash
-poetry run python -m spectrumov input.wav output.mov --width 1280 --height 360
+poetry run python -m spectrumov input.mp3 output.mov --width 1280 --height 360
 ```
 
 Common options:

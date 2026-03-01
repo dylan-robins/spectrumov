@@ -58,6 +58,7 @@ class SpectrumRenderConfig:
     ffmpeg_prores_profile: int = 3
     render_bit_depth: int = 16
     curve_smoothing_sigma: float = 1.2
+    analysis_sample_rate: int = 48000
 
 
 class ReSpectrumRenderer:
@@ -539,26 +540,24 @@ class ReSpectrumRenderer:
         return total_frames
 
 
-def render_wav_to_mp4(
-    input_wav: str | Path,
+def render_audio_to_video(
+    input_audio: str | Path,
     output_mp4: str | Path,
     config: SpectrumRenderConfig,
     show_progress: bool = True,
 ) -> dict[str, int | float | str]:
-    sample_rate, samples = wavfile.read(str(input_wav))
-    normalized = normalize_audio_array(samples)
-    mono = sum_channels_to_mono(normalized)
+    sample_rate, mono = load_audio_mono_for_analysis(input_audio, config)
 
     renderer = ReSpectrumRenderer(float(sample_rate), config)
     frames = renderer.render_audio(
         mono,
         output_mp4,
         show_progress=show_progress,
-        source_audio_path=input_wav,
+        source_audio_path=input_audio,
     )
 
     return {
-        "input_wav": str(input_wav),
+        "input_audio": str(input_audio),
         "output_mp4": str(output_mp4),
         "sample_rate": int(sample_rate),
         "samples": int(mono.shape[0]),
@@ -567,3 +566,61 @@ def render_wav_to_mp4(
         "width": int(config.width),
         "height": int(config.height),
     }
+
+
+def render_wav_to_mp4(
+    input_wav: str | Path,
+    output_mp4: str | Path,
+    config: SpectrumRenderConfig,
+    show_progress: bool = True,
+) -> dict[str, int | float | str]:
+    # Backward-compatible alias.
+    return render_audio_to_video(input_wav, output_mp4, config, show_progress)
+
+
+def decode_audio_mono_with_ffmpeg(
+    input_audio: str | Path, ffmpeg_path: str, sample_rate: int
+) -> np.ndarray:
+    cmd = [
+        ffmpeg_path,
+        "-v",
+        "error",
+        "-i",
+        str(input_audio),
+        "-f",
+        "f32le",
+        "-acodec",
+        "pcm_f32le",
+        "-ac",
+        "1",
+        "-ar",
+        str(int(sample_rate)),
+        "-",
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg decode failed with exit code {proc.returncode}: {proc.stderr.decode(errors='replace')}"
+        )
+
+    mono = np.frombuffer(proc.stdout, dtype=np.float32)
+    if mono.size == 0:
+        raise RuntimeError("Decoded audio is empty")
+    return mono
+
+
+def load_audio_mono_for_analysis(input_audio: str | Path, config: SpectrumRenderConfig) -> tuple[int, np.ndarray]:
+    input_path = Path(input_audio)
+    if input_path.suffix.lower() == ".wav":
+        sample_rate, samples = wavfile.read(str(input_path))
+        normalized = normalize_audio_array(samples)
+        mono = sum_channels_to_mono(normalized)
+        return int(sample_rate), mono
+
+    sample_rate = int(config.analysis_sample_rate)
+    mono = decode_audio_mono_with_ffmpeg(
+        input_audio=input_path,
+        ffmpeg_path=config.ffmpeg_path,
+        sample_rate=sample_rate,
+    )
+    return sample_rate, mono
