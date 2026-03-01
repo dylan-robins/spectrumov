@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from spectrumanalysis.renderer import (
+from spectrumov.renderer import (
     ReSpectrumRenderer,
     SpectrumRenderConfig,
     choose_audio_codec_for_container,

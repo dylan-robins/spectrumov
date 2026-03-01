@@ -1,4 +1,4 @@
-# Spectrum Analysis
+# spectrumov
 
 Render a ReSpectrum-style spectrum analyzer MP4 from a WAV file.
 
@@ -20,19 +20,19 @@ For explicit `.mp4` outputs, audio is muxed as AAC.
 ## Usage
 
 ```bash
-poetry run python -m spectrumanalysis input.wav output.mov
+poetry run python -m spectrumov input.wav output.mov
 ```
 
 Default video size is `1920x500`. You can override it:
 
 ```bash
-poetry run python -m spectrumanalysis input.wav output.mov --width 1280 --height 360
+poetry run python -m spectrumov input.wav output.mov --width 1280 --height 360
 ```
 
 Common options:
 
 ```bash
-poetry run python -m spectrumanalysis input.wav output.mov \
+poetry run python -m spectrumov input.wav output.mov \
   --fps 30 \
   --encoder ffmpeg \
   --display-mode fill \

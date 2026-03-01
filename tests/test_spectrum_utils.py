@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from spectrumanalysis.utils import (
+from spectrumov.utils import (
     compute_decay_delta,
     compute_group_map,
     freq_to_x,

@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "spectrumanalysis"
+name = "spectrumov"
 version = "0.1.0"
 description = ""
 authors = ["dylan-robins <dylan.robins@gmail.com>"]
@@ -14,7 +14,7 @@ opencv-python = "^4.13.0.92"
 tqdm = "^4.67.3"
 
 [tool.poetry.scripts]
-spectrumanalysis = "spectrumanalysis.cli:main"
+spectrumov = "spectrumov.cli:main"
 
 [build-system]
 requires = ["poetry-core"]
