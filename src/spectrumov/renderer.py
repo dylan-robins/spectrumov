@@ -87,7 +87,8 @@ class ReSpectrumRenderer:
         self.very_compact_height = config.height < 240
         self.very_compact = self.very_compact_width or self.very_compact_height
 
-        self.text_height = 12.0
+        # Reserve bottom space only when grid labels are rendered.
+        self.text_height = 12.0 if config.show_grid else 0.0
         self.bottom_margin = -18.0 if self.very_compact else 0.0
         self.bottom = config.height - self.bottom_margin - self.text_height
 

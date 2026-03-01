@@ -2,6 +2,10 @@
 
 Render a ReSpectrum-style spectrum analyzer video from an audio file.
 
+![Spectrum demo](examples/example-no-grid.gif)
+
+![Spectrum demo](examples/example-grid.gif)
+
 The renderer is tuned to match the default ReSpectrum JSFX behavior in this repo:
 
 - Fill display mode
@@ -24,7 +28,7 @@ Input can be WAV or any container/codec ffmpeg can decode (for example mp3, ogg,
 poetry run python -m spectrumov input.wav output.mov
 ```
 
-Default video size is `1920x500`. You can override it:
+Default video size is `1920x300`. You can override it:
 
 ```bash
 poetry run python -m spectrumov input.mp3 output.mov --width 1280 --height 360
